@@ -8,9 +8,7 @@ from openpyxl.utils import get_column_letter
 import pandas as pd
 import streamlit as st
 
-st.set_page_config(
-    page_title="Calculadora de Tarimas", layout="centered"
-)
+st.set_page_config(page_title="Calculadora de Tarimas", layout="centered")
 
 st.title("Calculadora de Porcentajes por Tarima")
 
@@ -44,8 +42,8 @@ def cargar_datos():
                 "% Merma",
                 "Bueno",
                 "% Bueno",
-                "Procesado",
-                "% Procesado",
+                "No Colocable",
+                "% No Colocable",
             ]
         )
 
@@ -81,8 +79,8 @@ def generar_excel_estilizado(df):
         "% Merma",
         "Bueno",
         "% Bueno",
-        "Procesado",
-        "% Procesado",
+        "No Colocable",
+        "% No Colocable",
     ]
 
     header_fills = [
@@ -115,7 +113,7 @@ def generar_excel_estilizado(df):
         ),
         PatternFill(
             start_color="C55A11", end_color="C55A11", fill_type="solid"
-        ),  # Naranja - Procesado
+        ),  # Naranja - No Colocable
         PatternFill(
             start_color="C55A11", end_color="C55A11", fill_type="solid"
         ),
@@ -158,11 +156,11 @@ def generar_excel_estilizado(df):
         ws.row_dimensions[current_row].height = 22
         is_even = current_row % 2 == 0
 
-        # Manejo y limpieza de porcentajes si vienen como texto
         def clean_pct(val):
             if isinstance(val, str):
                 return float(val.replace("%", "").strip()) / 100.0
-            return float(val) / 100.0 if val > 1 else float(val)
+            val_float = float(val)
+            return val_float / 100.0 if val_float > 1 else val_float
 
         valores = [
             row.get("Nº / ID Tarima", ""),
@@ -174,8 +172,8 @@ def generar_excel_estilizado(df):
             clean_pct(row.get("% Merma", 0)),
             float(row.get("Bueno", 0)),
             clean_pct(row.get("% Bueno", 0)),
-            float(row.get("Procesado", 0)),
-            clean_pct(row.get("% Procesado", 0)),
+            float(row.get("No Colocable", row.get("Procesado", 0))),
+            clean_pct(row.get("% No Colocable", row.get("% Procesado", 0))),
         ]
 
         for col_idx, val in enumerate(valores, 1):
@@ -186,7 +184,6 @@ def generar_excel_estilizado(df):
             if is_even:
                 cell.fill = zebra_fill
 
-            # Alineación y formatos numéricos de Excel
             if col_idx in [1, 2, 3, 4]:
                 cell.alignment = Alignment(
                     horizontal="center", vertical="center"
@@ -202,7 +199,6 @@ def generar_excel_estilizado(df):
                 )
                 cell.number_format = "0.0%"
 
-    # Autoajuste de ancho de columnas
     for col in ws.columns:
         col_letter = get_column_letter(col[0].column)
         ws.column_dimensions[col_letter].width = 16
@@ -218,7 +214,7 @@ tarima_id = st.text_input("Número / ID de Tarima o Lote:", value="")
 fi = st.number_input("Peso Total Inicial (FI):", min_value=0.0, value=0.0)
 merma = st.number_input("Peso de Merma:", min_value=0.0, value=0.0)
 bueno = st.number_input("Peso de Bueno:", min_value=0.0, value=0.0)
-procesado = st.number_input("Peso Procesado:", min_value=0.0, value=0.0)
+no_colocable = st.number_input("Peso No Colocable:", min_value=0.0, value=0.0)
 
 # VALIDACIONES
 if fi <= 0:
@@ -226,26 +222,26 @@ if fi <= 0:
         "Ingresa un Peso Total Inicial (FI) mayor a 0 para calcular los porcentajes."
     )
 else:
-    suma_partes = merma + bueno + procesado
+    suma_partes = merma + bueno + no_colocable
 
     if suma_partes > fi:
         st.error(
-            f"❌ Error: La suma de las partes ({suma_partes:.2f}) sobrepasa el Peso Total Inicial ({fi:.2f})."
+            f"Error: La suma de las partes ({suma_partes:.2f}) sobrepasa el Peso Total Inicial ({fi:.2f})."
         )
     else:
         # Cálculos de Porcentajes
         pct_merma = (merma / fi) * 100
         pct_bueno = (bueno / fi) * 100
-        pct_procesado = (procesado / fi) * 100
+        pct_no_colocable = (no_colocable / fi) * 100
 
         # Vista previa del cálculo
         data_preview = {
-            "Concepto": ["Merma", "Bueno", "Procesado"],
-            "Peso (lb/kg)": [merma, bueno, procesado],
+            "Concepto": ["Merma", "Bueno", "No Colocable"],
+            "Peso (lb/kg)": [merma, bueno, no_colocable],
             "Porcentaje (%)": [
                 f"{pct_merma:.1f}%",
                 f"{pct_bueno:.1f}%",
-                f"{pct_procesado:.1f}%",
+                f"{pct_no_colocable:.1f}%",
             ],
         }
         st.subheader("Resumen de Porcentajes")
@@ -274,8 +270,8 @@ else:
                         "% Merma": f"{pct_merma:.1f}%",
                         "Bueno": bueno,
                         "% Bueno": f"{pct_bueno:.1f}%",
-                        "Procesado": procesado,
-                        "% Procesado": f"{pct_procesado:.1f}%",
+                        "No Colocable": no_colocable,
+                        "% No Colocable": f"{pct_no_colocable:.1f}%",
                     }
                 ]
             )
@@ -284,7 +280,7 @@ else:
                 [df_existente, nuevo_registro], ignore_index=True
             )
             df_actualizado.to_excel(EXCEL_FILE, index=False)
-            st.success("✅ ¡Registro guardado exitosamente!")
+            st.success("¡Registro guardado exitosamente!")
             st.rerun()
 
 # --- HISTORIAL Y BORRADO ---
@@ -297,7 +293,7 @@ if not df_historial.empty:
     st.dataframe(df_historial)
 
     # Eliminar registro
-    st.markdown("### 🗑️ Eliminar un registro")
+    st.markdown("### Eliminar un registro")
 
     opciones_eliminar = [
         f"Fila {idx + 1} - {row['Nº / ID Tarima']} ({row['Fecha']} {row['Hora']})"
@@ -308,13 +304,13 @@ if not df_historial.empty:
         "Selecciona la fila a eliminar:", opciones_eliminar
     )
 
-    if st.button("❌ Eliminar Fila Seleccionada"):
+    if st.button("Eliminar Fila Seleccionada"):
         indice_eliminar = opciones_eliminar.index(registro_a_eliminar)
         df_historial = df_historial.drop(index=indice_eliminar).reset_index(
             drop=True
         )
         df_historial.to_excel(EXCEL_FILE, index=False)
-        st.success("✅ ¡Registro eliminado!")
+        st.success("¡Registro eliminado!")
         st.rerun()
 
     st.divider()
