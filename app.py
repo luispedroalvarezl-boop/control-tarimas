@@ -1,12 +1,12 @@
 import io
 import os
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 import openpyxl
-from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
-from openpyxl.utils import get_column_letter
 import pandas as pd
 import streamlit as st
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+from openpyxl.utils import get_column_letter
 
 st.set_page_config(page_title="Calculadora de Tarimas", layout="centered")
 
@@ -15,7 +15,10 @@ st.title("Calculadora de Porcentajes por Tarima")
 # Archivo de almacenamiento persistente
 EXCEL_FILE = "registros_tarimas.xlsx"
 
-# Traducción de días de la semana a español
+# Guatemala está en UTC-6 todo el año (no usa horario de verano).
+# Así la hora sale bien aunque el servidor esté en otra zona horaria.
+ZONA_GT = timezone(timedelta(hours=-6))
+
 DIAS_SEMANA = {
     "Monday": "Lunes",
     "Tuesday": "Martes",
@@ -26,26 +29,87 @@ DIAS_SEMANA = {
     "Sunday": "Domingo",
 }
 
+COLUMNAS = [
+    "Día",
+    "Fecha",
+    "Hora",
+    "Nº / ID Tarima",
+    "Peso Total (FI)",
+    "Merma",
+    "% Merma",
+    "Bueno",
+    "% Bueno",
+    "No Colocable",
+    "% No Colocable",
+]
+
+PARES_PESO_PCT = [
+    ("Merma", "% Merma"),
+    ("Bueno", "% Bueno"),
+    ("No Colocable", "% No Colocable"),
+]
+
+
+def a_numero(valor):
+    """Convierte a float; si está vacío/NaN devuelve 0."""
+    try:
+        if pd.isna(valor):
+            return 0.0
+        return float(valor)
+    except (TypeError, ValueError):
+        return 0.0
+
 
 def cargar_datos():
-    if os.path.exists(EXCEL_FILE):
-        return pd.read_excel(EXCEL_FILE)
-    else:
-        return pd.DataFrame(
-            columns=[
-                "Día",
-                "Fecha",
-                "Hora",
-                "Nº / ID Tarima",
-                "Peso Total (FI)",
-                "Merma",
-                "% Merma",
-                "Bueno",
-                "% Bueno",
-                "No Colocable",
-                "% No Colocable",
-            ]
-        )
+    """Carga el Excel y arregla de una vez los registros ya guardados:
+    - Renombra columnas viejas ("Procesado" -> "No Colocable")
+    - Rellena datos faltantes y recalcula los % que falten
+    - Guarda el archivo corregido automáticamente
+    """
+    if not os.path.exists(EXCEL_FILE):
+        return pd.DataFrame(columns=COLUMNAS)
+
+    df = pd.read_excel(EXCEL_FILE)
+    cambio = False
+
+    # Migrar columnas viejas
+    for viejo, nuevo in [
+        ("Procesado", "No Colocable"),
+        ("% Procesado", "% No Colocable"),
+    ]:
+        if viejo in df.columns:
+            if nuevo in df.columns:
+                df[nuevo] = df[nuevo].combine_first(df[viejo])
+            else:
+                df[nuevo] = df[viejo]
+            df = df.drop(columns=[viejo])
+            cambio = True
+
+    # Asegurar todas las columnas
+    for col in COLUMNAS:
+        if col not in df.columns:
+            df[col] = None
+            cambio = True
+
+    df = df[COLUMNAS].copy()
+
+    # Rellenar pesos vacíos con 0 y recalcular % faltantes
+    for idx, fila in df.iterrows():
+        fi = a_numero(fila["Peso Total (FI)"])
+        for peso_col, pct_col in PARES_PESO_PCT:
+            if pd.isna(fila[peso_col]):
+                df.at[idx, peso_col] = 0.0
+                cambio = True
+            if pd.isna(fila[pct_col]):
+                peso = a_numero(df.at[idx, peso_col])
+                pct = (peso / fi * 100) if fi > 0 else 0.0
+                df.at[idx, pct_col] = f"{pct:.1f}%"
+                cambio = True
+
+    if cambio:
+        df.to_excel(EXCEL_FILE, index=False)
+
+    return df
 
 
 def generar_excel_estilizado(df):
@@ -54,7 +118,6 @@ def generar_excel_estilizado(df):
     ws = wb.active
     ws.title = "Reporte de Tarimas"
 
-    # Mostrar líneas de la cuadrícula
     ws.views.sheetView[0].showGridLines = True
 
     # 1. Título del Reporte
@@ -83,40 +146,22 @@ def generar_excel_estilizado(df):
         "% No Colocable",
     ]
 
+    colores = [
+        "2F5597",  # Azul - Identificación
+        "2F5597",
+        "2F5597",
+        "2F5597",
+        "215E21",  # Verde oscuro - Peso Total
+        "C00000",  # Rojo - Merma
+        "C00000",
+        "385723",  # Verde - Bueno
+        "385723",
+        "C55A11",  # Naranja - No Colocable
+        "C55A11",
+    ]
     header_fills = [
-        PatternFill(
-            start_color="2F5597", end_color="2F5597", fill_type="solid"
-        ),  # Azul - Identificación
-        PatternFill(
-            start_color="2F5597", end_color="2F5597", fill_type="solid"
-        ),
-        PatternFill(
-            start_color="2F5597", end_color="2F5597", fill_type="solid"
-        ),
-        PatternFill(
-            start_color="2F5597", end_color="2F5597", fill_type="solid"
-        ),
-        PatternFill(
-            start_color="215E21", end_color="215E21", fill_type="solid"
-        ),  # Verde Oscuro - Peso Total
-        PatternFill(
-            start_color="C00000", end_color="C00000", fill_type="solid"
-        ),  # Rojo - Merma
-        PatternFill(
-            start_color="C00000", end_color="C00000", fill_type="solid"
-        ),
-        PatternFill(
-            start_color="385723", end_color="385723", fill_type="solid"
-        ),  # Verde - Bueno
-        PatternFill(
-            start_color="385723", end_color="385723", fill_type="solid"
-        ),
-        PatternFill(
-            start_color="C55A11", end_color="C55A11", fill_type="solid"
-        ),  # Naranja - No Colocable
-        PatternFill(
-            start_color="C55A11", end_color="C55A11", fill_type="solid"
-        ),
+        PatternFill(start_color=c, end_color=c, fill_type="solid")
+        for c in colores
     ]
 
     ws.row_dimensions[3].height = 28
@@ -146,34 +191,39 @@ def generar_excel_estilizado(df):
         top=Side(style="thin", color="D9D9D9"),
         bottom=Side(style="thin", color="D9D9D9"),
     )
-
     zebra_fill = PatternFill(
         start_color="F2F2F2", end_color="F2F2F2", fill_type="solid"
     )
 
-    for row_idx, row in df.iterrows():
-        current_row = row_idx + 4
+    def clean_pct(val):
+        if isinstance(val, str):
+            try:
+                return float(val.replace("%", "").strip()) / 100.0
+            except ValueError:
+                return 0.0
+        val_float = a_numero(val)
+        return val_float / 100.0 if val_float > 1 else val_float
+
+    def texto(val):
+        return "" if pd.isna(val) else val
+
+    for i, (_, row) in enumerate(df.iterrows()):
+        current_row = i + 4
         ws.row_dimensions[current_row].height = 22
         is_even = current_row % 2 == 0
 
-        def clean_pct(val):
-            if isinstance(val, str):
-                return float(val.replace("%", "").strip()) / 100.0
-            val_float = float(val)
-            return val_float / 100.0 if val_float > 1 else val_float
-
         valores = [
-            row.get("Nº / ID Tarima", ""),
-            row.get("Día", ""),
-            row.get("Fecha", ""),
-            row.get("Hora", ""),
-            float(row.get("Peso Total (FI)", 0)),
-            float(row.get("Merma", 0)),
+            texto(row.get("Nº / ID Tarima", "")),
+            texto(row.get("Día", "")),
+            texto(row.get("Fecha", "")),
+            texto(row.get("Hora", "")),
+            a_numero(row.get("Peso Total (FI)", 0)),
+            a_numero(row.get("Merma", 0)),
             clean_pct(row.get("% Merma", 0)),
-            float(row.get("Bueno", 0)),
+            a_numero(row.get("Bueno", 0)),
             clean_pct(row.get("% Bueno", 0)),
-            float(row.get("No Colocable", row.get("Procesado", 0))),
-            clean_pct(row.get("% No Colocable", row.get("% Procesado", 0))),
+            a_numero(row.get("No Colocable", 0)),
+            clean_pct(row.get("% No Colocable", 0)),
         ]
 
         for col_idx, val in enumerate(valores, 1):
@@ -210,11 +260,22 @@ def generar_excel_estilizado(df):
 # --- ENTRADAS DE DATOS ---
 st.subheader("Ingreso de Datos de la Tarima")
 
+ahora_vista = datetime.now(ZONA_GT)
+st.caption(
+    f"🕒 {DIAS_SEMANA[ahora_vista.strftime('%A')]} "
+    f"{ahora_vista.strftime('%Y-%m-%d')} · Hora actual: "
+    f"{ahora_vista.strftime('%H:%M:%S')} (se registra al guardar)"
+)
+
 tarima_id = st.text_input("Número / ID de Tarima o Lote:", value="")
-fi = st.number_input("Peso Total Inicial (FI):", min_value=0.0, value=0.0)
-merma = st.number_input("Peso de Merma:", min_value=0.0, value=0.0)
-bueno = st.number_input("Peso de Bueno:", min_value=0.0, value=0.0)
-no_colocable = st.number_input("Peso No Colocable:", min_value=0.0, value=0.0)
+fi = st.number_input(
+    "Peso Total Inicial (FI):", min_value=0.0, value=0.0, step=0.1
+)
+merma = st.number_input("Peso de Merma:", min_value=0.0, value=0.0, step=0.1)
+bueno = st.number_input("Peso de Bueno:", min_value=0.0, value=0.0, step=0.1)
+no_colocable = st.number_input(
+    "Peso No Colocable:", min_value=0.0, value=0.0, step=0.1
+)
 
 # VALIDACIONES
 if fi <= 0:
@@ -223,35 +284,42 @@ if fi <= 0:
     )
 else:
     suma_partes = merma + bueno + no_colocable
+    restante = fi - suma_partes  # se va restando en vivo
 
-    if suma_partes > fi:
+    # Resta en vivo
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Peso Total (FI)", f"{fi:,.1f}")
+    c2.metric("Ya asignado", f"{suma_partes:,.1f}")
+    c3.metric("Restante por asignar", f"{restante:,.1f}")
+
+    if restante < 0:
         st.error(
-            f"Error: La suma de las partes ({suma_partes:.2f}) sobrepasa el Peso Total Inicial ({fi:.2f})."
+            f"Error: La suma de las partes ({suma_partes:.2f}) sobrepasa el "
+            f"Peso Total Inicial ({fi:.2f}). Te pasaste por {abs(restante):.2f}."
         )
     else:
-        # Cálculos de Porcentajes
         pct_merma = (merma / fi) * 100
         pct_bueno = (bueno / fi) * 100
         pct_no_colocable = (no_colocable / fi) * 100
+        pct_restante = (restante / fi) * 100
 
-        # Vista previa del cálculo
         data_preview = {
-            "Concepto": ["Merma", "Bueno", "No Colocable"],
-            "Peso (lb/kg)": [merma, bueno, no_colocable],
+            "Concepto": ["Merma", "Bueno", "No Colocable", "Sin asignar"],
+            "Peso (lb/kg)": [merma, bueno, no_colocable, restante],
             "Porcentaje (%)": [
                 f"{pct_merma:.1f}%",
                 f"{pct_bueno:.1f}%",
                 f"{pct_no_colocable:.1f}%",
+                f"{pct_restante:.1f}%",
             ],
         }
         st.subheader("Resumen de Porcentajes")
         st.table(pd.DataFrame(data_preview))
 
-        # Botón Guardar
         if st.button("Guardar Registro en Excel"):
             df_existente = cargar_datos()
 
-            ahora = datetime.now()
+            ahora = datetime.now(ZONA_GT)
             dia_esp = DIAS_SEMANA[ahora.strftime("%A")]
             fecha_str = ahora.strftime("%Y-%m-%d")
             hora_str = ahora.strftime("%H:%M:%S")
@@ -278,7 +346,7 @@ else:
 
             df_actualizado = pd.concat(
                 [df_existente, nuevo_registro], ignore_index=True
-            )
+            )[COLUMNAS]
             df_actualizado.to_excel(EXCEL_FILE, index=False)
             st.success("¡Registro guardado exitosamente!")
             st.rerun()
@@ -287,12 +355,11 @@ else:
 st.divider()
 st.subheader("Historial de Registros Guardados")
 
-df_historial = cargar_datos()
+df_historial = cargar_datos()  # también corrige y guarda los registros viejos
 
 if not df_historial.empty:
     st.dataframe(df_historial)
 
-    # Eliminar registro
     st.markdown("### Eliminar un registro")
 
     opciones_eliminar = [
@@ -315,7 +382,6 @@ if not df_historial.empty:
 
     st.divider()
 
-    # Botón de descarga con formato estilizado
     excel_binario = generar_excel_estilizado(df_historial)
 
     st.download_button(
